@@ -14,6 +14,7 @@ ai2d_rst_json = os.path.join('..', 'ai2d-rst')
 ai2d_rst_pickle = os.path.join('..', 'AI2D-RST_resources', 'utils', 'reference_1000.pkl')
 
 class DFConstructor(object):
+    # This class constructs DataFrames from the data in AI2D and AI2D-RST
     def __init__(self):
         self.diagram_id = 0
         self.total_labels = 0
@@ -27,8 +28,8 @@ class DFConstructor(object):
         self.parse_original()
         self.write_output()
 
-    # Iterate over the original reference file
     def parse_original(self):
+        # Iterate over the original reference file
         df = pd.read_pickle(ai2d_rst_pickle)
 
         for index, row in df.iterrows():
@@ -37,8 +38,12 @@ class DFConstructor(object):
             self.macro_groups = defaultdict(list)
             self.parse_row(row)
 
-    # Parse single row
     def parse_row(self, row):
+        """ Parse a single row in the AI2D-RST reference DataFrame
+
+        Keyword arguments:
+        row -- a single row of the DataFrame
+        """
         # Make a new DataFrame to append to the complete one
         new_df = pd.DataFrame(columns=['diagram_id', 'relation_id', 'relation_type',
                                         'macro_group', 'label_id', 'content', 'role'])
@@ -78,9 +83,15 @@ class DFConstructor(object):
         self.dataframe = self.dataframe.append(new_df, ignore_index=True)
 
     def find_relations(self, rst_graph, dataframe):
-        # Find each relation in the diagram
-        for node_id, node_data in rst_graph.nodes(data=True):
+        """ Find each relation in the diagram
 
+        Keyword arguments:
+        rst_graph -- the RST NetworkX graph from AI2D-RST
+        dataframe -- the DataFrame to be appended to
+        """
+
+        for node_id, node_data in rst_graph.nodes(data=True):
+            # Found a relation; parse it
             if node_data['kind'] == 'relation':
 
                 dataframe = self.parse_relation(node_id, node_data, rst_graph, dataframe)
@@ -88,9 +99,17 @@ class DFConstructor(object):
         return dataframe
 
     def parse_relation(self, node_id, node_data, graph, dataframe):
-        # Parse one relation for its participants
+        """ Parse one relation for its constituent nodes
+
+        Keyword arguments:
+        node_id -- the ID of the relation node
+        node_data -- the data of the node in JSON format
+        graph -- the RST graph of the diagram
+        dataframe -- the DataFrame to be appended to
+        """
         relation_type = node_data['rel_name']
 
+        # Find the nuclei or nucleus of the relation
         try:
             nuclei = node_data['nuclei'].split()
         except KeyError:
@@ -104,7 +123,7 @@ class DFConstructor(object):
             # Process other relations
             dataframe = self.parse_text_elements(node_id, relation_type, nuclei, dataframe, 'nuc')
 
-            # Attempt to find the satellites
+            # Find and parse possible satellites
             try:
                 satellites = node_data['satellites'].split()
                 dataframe = self.parse_text_elements(node_id, relation_type, satellites, dataframe, 'sat')
@@ -114,7 +133,14 @@ class DFConstructor(object):
         return dataframe
 
     def parse_joint(self, joint_id, joint_nuclei, graph, dataframe):
-        # Parse a JOINT relation
+        """ Parse a JOINT relation
+
+        Keyword arguments:
+        joint_id -- the ID of the JOINT relation
+        joint_nuclei -- the nuclei of the JOINT relation
+        graph -- the RST graph
+        dataframe -- the DataFrame to be appended to
+        """
         for adj in graph.adjacency():
             # Found this relation; find its satellite
             if adj[0] == joint_id:
@@ -160,9 +186,18 @@ class DFConstructor(object):
         return dataframe
 
     def parse_text_elements(self, rel_id, rel_name, elements, dataframe, mode):
-        # Parse each text element in a relation
+        """ Parse the text elements in a given relation
+
+        Keyword arguments:
+        rel_id -- the ID of the relation
+        rel_name -- the name of the relation
+        elements -- the nuclei or satellites of the relation to be parsed
+        dataframe -- the DataFrame to be appended to
+        mode -- either 'nuc' (nucleus) or 'sat' (satellite)
+        """
         for elem in elements:
 
+            # Check for text elements
             if re.search(label_pattern, elem):
 
                 dataframe = self.append_content(rel_id, rel_name, elem, mode, dataframe)
@@ -170,7 +205,13 @@ class DFConstructor(object):
         return dataframe
 
     def parse_grouping(self, layout_graph):
-        # Parse the macro-groups in the diagram
+        """ Parse the grouping in the layout graph
+
+        Keyword arguments:
+        layout_graph -- the layout graph of the diagram
+        """
+
+        # Find all macro-groups
         macro_groups = nx.get_node_attributes(layout_graph, 'macro_group')
 
         # Set the image constant's type as the default macro-group
@@ -187,15 +228,24 @@ class DFConstructor(object):
             self.find_dominant_macro_groups(T, 'I0', initial_macro_group, layout_graph)
 
     def find_dominant_macro_groups(self, tree, group_node, macro_group, layout_graph):
-        # Find the dominant macro-group for each element
+        """ Find the dominant macro-group for each node; callable recursively
+
+        Keyword arguments:
+        tree -- the NetworkX tree containing the group node and its descendants
+        group_node -- the group node the children of which are to be parsed
+        macro-group -- the current dominant macro-group
+        layout_graph -- the diagram's layout graph
+        """
+
+        # Iterate over the group node's descendants
         for child in nx.descendants(tree, group_node):
             if re.search(label_pattern, child) and macro_group is not None:
-                # This child node belongs in its parent's macro-group
+                # This child node is a label and belongs in its parent's macro-group
                 if child not in self.macro_groups[macro_group]:
                     self.macro_groups[macro_group].append(child)
 
             elif len(child) == 6:
-                # This is a group; call this method recursively
+                # This is a group; call this method recursively using this group
                 group_node = layout_graph.nodes[child]
 
                 try:
@@ -206,9 +256,15 @@ class DFConstructor(object):
                 self.find_dominant_macro_groups(tree, child, macro_group, layout_graph)
 
     def extract_linguistic_content(self, annotation, label_tags):
-        # Add the linguistic content of each tag to a dictionary
+        """ Add the linguistic content of each tag to a dictionary
+
+        Keyword arguments:
+        annotation -- the annotation JSON of the diagram
+        label_tags -- the IDs of the labels the content of which is fetched
+        """
         for tag in label_tags:
 
+            # Get the content of the label
             text = annotation['text'][tag]['value']
 
             self.label_content[tag] = text

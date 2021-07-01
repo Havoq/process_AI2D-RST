@@ -12,6 +12,7 @@ from sklearn import preprocessing
 
 
 class DFParser(object):
+    # This class parses the DataFrame and produces figures from it
     def __init__(self):
         self.df = None
         self.nlp = spacy.load('en_core_web_trf')
@@ -36,11 +37,13 @@ class DFParser(object):
         self.total_labels_by_relation = defaultdict(int)
 
     def parse_dataframe(self, path):
+        # Parse the DataFrame
         self.df = pd.read_pickle(path)
         self.parse_linguistic_content()
         self.write_output()
 
     def parse_linguistic_content(self):
+        # Parse the linguistic content of the DataFrame
         # List and parse macro-groups
         unique_macro_groups = self.df[self.df['macro_group'].notnull()]['macro_group'].unique()
 
@@ -56,7 +59,12 @@ class DFParser(object):
             self.parse_column('relation_type', rel)
 
     def parse_column(self, column, value):
-        # Parse a single column with a relation or macro-structure as the value
+        """ Parse a single column with a relation or macro-structure as the value
+
+        Keyword arguments:
+        column -- the DataFrame column
+        value -- a string with a relation or macro-group name as its value
+        """
         rows = self.df[self.df[column] == value]
         rows = rows.iloc[:, 5]
         row_content = rows.to_list()
@@ -73,7 +81,7 @@ class DFParser(object):
             self.add_word_counts(column, value, label)
 
     def parse_pos(self, column, value, doc):
-        # Parse the POS pattern
+        # Parse the POS pattern of a single label
         pos_pattern = " ".join([token.pos_ for token in doc if not token.is_punct])
         pos_pattern = pos_pattern.replace('PROPN', 'NOUN')
 
@@ -120,6 +128,8 @@ class DFParser(object):
             length = len(label.split())
             self.words_by_relation[value] += length
 
+            # As we are interested in the figures between ELABORATION and IDENTIFICATION,
+            # handle these specifically
             if value == 'elaboration':
                 self.elaboration_counts.append(length)
             elif value == 'identification':
@@ -128,14 +138,14 @@ class DFParser(object):
     def write_output(self):
         # Write output
         print('Producing output...')
-        self.calculate_mannwhitneyu()
+        # self.calculate_mannwhitneyu()
         self.construct_heatmaps()
         self.construct_tables()
 
     def calculate_mannwhitneyu(self):
-        # Calculate Mann-Whitney U
+        # Calculate Mann-Whitney U between IDENTIFICATION and ELABORATION
         print('Calculating Mann-Whitney U...')
-        #results = mwu(self.identification_counts, self.elaboration_counts, tail='one-sided')
+        # results = mwu(self.identification_counts, self.elaboration_counts, tail='one-sided')
         results = mannwhitneyu(self.identification_counts, self.elaboration_counts)
         input(results)
 
@@ -203,7 +213,7 @@ class DFParser(object):
 
     def find_most_common_patterns(self):
         c = Counter(self.total_pos_patterns)
-        #return c.most_common(10)
+        # return c.most_common(10)
         return c.most_common(5)
 
     def construct_tables(self):
