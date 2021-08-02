@@ -1,17 +1,17 @@
 import json
+import argparse
 import os
 import re
 import networkx as nx
 import pandas as pd
 import numpy as np
+import sys
+sys.path.append('../../../A2D/utils/')
 from collections import defaultdict
 
 # Compile a regex pattern to identify label IDs in AI2D-RST
 label_pattern = re.compile(r'^T\d+\.?\d*$')
 
-ai2d_json = os.path.join('..', 'annotations')
-ai2d_rst_json = os.path.join('..', 'ai2d-rst')
-ai2d_rst_pickle = os.path.join('..', 'AI2D-RST_resources', 'utils', 'reference_1000.pkl')
 
 class DFConstructor(object):
     # This class constructs DataFrames from the data in AI2D and AI2D-RST
@@ -316,5 +316,26 @@ class DFConstructor(object):
         # example_df.to_csv('random_five.csv')
 
 if __name__ == '__main__':
+
+    # Set up the argument parser
+    ap = argparse.ArgumentParser()
+
+    # Define arguments
+    ap.add_argument("-a", "--ai2d", required=True,
+                    help="Path to the directory containing AI2D JSON annotations.")
+    ap.add_argument("-ar", "--ai2d_rst", required=True,
+                    help="Path to the directory containing AI2D-RST JSON annotations.")
+    ap.add_argument("-ap", "--ai2d_rst_pkl", required=True,
+                    help="Path to the file containing the pickled AI2D-RST data.")
+
+    # Parse arguments
+    args = vars(ap.parse_args())
+
+    # Assign arguments to variables
+    ai2d_json = args['ai2d']
+    ai2d_rst_json = args['ai2d_rst']
+    ai2d_rst_pickle = args['ai2d_rst_pkl']
+
+	# Construct data
     constructor = DFConstructor()
     constructor.construct_dataframes()
