@@ -4,14 +4,18 @@ import re
 import networkx as nx
 import pandas as pd
 import numpy as np
+import sys
+import argparse
 from collections import defaultdict
+sys.path.append('../../../A2D/utils/')
+from build_graphs import *
 
 # Compile a regex pattern to identify label IDs in AI2D-RST
 label_pattern = re.compile(r'^T\d+\.?\d*$')
 
-ai2d_json = os.path.join('..', 'annotations')
-ai2d_rst_json = os.path.join('..', 'ai2d-rst')
-ai2d_rst_pickle = os.path.join('..', 'AI2D-RST_resources', 'utils', 'reference_1000.pkl')
+ai2d_json = os.path.join('..', '..', 'AI2D-RST', 'ai2d', 'annotations')
+ai2d_rst_json = os.path.join('..', '..', 'AI2D-RST', 'utils', 'json_files', 'json', 'ai2d-rst')
+ai2d_rst_pickle = os.path.join('..', '..', 'AI2D-RST', 'utils', 'reference_1000.pkl')
 
 class DFConstructor(object):
     # This class constructs DataFrames from the data in AI2D and AI2D-RST
@@ -19,10 +23,11 @@ class DFConstructor(object):
         self.diagram_id = 0
         self.total_labels = 0
         self.total_diagrams = 0
+        self.node_types = None
         self.label_content = defaultdict(str)
         self.macro_groups = defaultdict(list)
         self.dataframe = pd.DataFrame(columns=['diagram_id', 'relation_id', 'relation_type',
-                                               'macro_group', 'label_id', 'content', 'role'])
+                                               'macro_group', 'label_id', 'content', 'role', 'nucleus_type'])
 
     def construct_dataframes(self):
         self.parse_original()
@@ -30,13 +35,59 @@ class DFConstructor(object):
 
     def parse_original(self):
         # Iterate over the original reference file
-        df = pd.read_pickle(ai2d_rst_pickle)
 
-        for index, row in df.iterrows():
-            # Reset default dictionaries and parse the next row
-            self.label_content = defaultdict(str)
-            self.macro_groups = defaultdict(list)
-            self.parse_row(row)
+        # df = pd.read_pickle(ai2d_rst_pickle)
+        #
+        # for index, row in df.iterrows():
+        #     # Reset default dictionaries and parse the next row
+        #     self.label_content = defaultdict(str)
+        #     self.macro_groups = defaultdict(list)
+        #     self.parse_row(row)
+
+        for file in os.listdir(ai2d_rst_json):
+            if file.endswith('.json'):
+                path = os.path.join(ai2d_rst_json, file)
+                with open(path) as f:
+                    json_data = json.loads(f.read())
+                    self.parse_json(json_data, path)
+
+    def parse_json(self, json_data, path):
+        # Make a new DataFrame to append to the complete one
+        new_df = pd.DataFrame(columns=['diagram_id', 'relation_id', 'relation_type',
+                                       'macro_group', 'label_id', 'content', 'role', 'nucleus_type'])
+
+        # Empty macro-group information
+        self.macro_groups = defaultdict(list)
+
+        self.diagram_id = json_data['id']
+        print(f'Parsing diagram {self.diagram_id}...')
+        self.total_diagrams += 1
+
+        layout_graph, conn_graph, rst_graph = json_to_nx(path)
+
+        # Find all labels and extract their content
+        self.node_types = nx.get_node_attributes(layout_graph, 'kind')
+        label_tags = [k for k, v in self.node_types.items() if v == 'text']
+        self.total_labels += len(label_tags)
+
+        # Load corresponding AI2D JSON file
+        original_json = os.path.join(ai2d_json, f'{self.diagram_id}.png.json')
+
+        with open(original_json) as original:
+            annotation = json.loads(original.read())
+
+        self.extract_linguistic_content(annotation, label_tags)
+
+        # Establish macrogroups for each tag
+        self.parse_grouping(layout_graph)
+
+        # Iterate over this graph's relations
+        new_df = self.find_relations(rst_graph, new_df)
+
+        # Add the new data to the entire DataFrame
+        self.dataframe = self.dataframe.append(new_df, ignore_index=True)
+
+        print(self.macro_groups)
 
     def parse_row(self, row):
         """ Parse a single row in the AI2D-RST reference DataFrame
@@ -46,7 +97,7 @@ class DFConstructor(object):
         """
         # Make a new DataFrame to append to the complete one
         new_df = pd.DataFrame(columns=['diagram_id', 'relation_id', 'relation_type',
-                                        'macro_group', 'label_id', 'content', 'role'])
+                                        'macro_group', 'label_id', 'content', 'role', 'nucleus_type'])
 
         diagram_name = row['image_name']
         self.diagram_id = diagram_name.split('.')[0]
@@ -61,8 +112,8 @@ class DFConstructor(object):
         rst_graph = diagram.rst_graph
 
         # Find all labels and extract their content
-        node_types = nx.get_node_attributes(layout_graph, 'kind')
-        label_tags = [k for k, v in node_types.items() if v == 'text']
+        self.node_types = nx.get_node_attributes(layout_graph, 'kind')
+        label_tags = [k for k, v in self.node_types.items() if v == 'text']
         self.total_labels += len(label_tags)
 
         # Load corresponding AI2D JSON file
@@ -91,10 +142,14 @@ class DFConstructor(object):
         """
 
         for node_id, node_data in rst_graph.nodes(data=True):
-            # Found a relation; parse it
-            if node_data['kind'] == 'relation':
+            try:
+                # Found a relation; parse it
+                if node_data['kind'] == 'relation':
 
-                dataframe = self.parse_relation(node_id, node_data, rst_graph, dataframe)
+                    dataframe = self.parse_relation(node_id, node_data, rst_graph, dataframe)
+
+            except KeyError:
+                input(f'{self.diagram_id} contains an untyped RST node!')
 
         return dataframe
 
@@ -126,7 +181,7 @@ class DFConstructor(object):
             # Find and parse possible satellites
             try:
                 satellites = node_data['satellites'].split()
-                dataframe = self.parse_text_elements(node_id, relation_type, satellites, dataframe, 'sat')
+                dataframe = self.parse_text_elements(node_id, relation_type, satellites, dataframe, 'sat', nuclei)
             except KeyError:
                 pass
 
@@ -159,7 +214,12 @@ class DFConstructor(object):
                         rel_name = satellite_relation['rel_name']
                         rel_id = satellite_relation['id']
 
-                        dataframe = self.parse_text_elements(rel_id, rel_name, joint_nuclei, dataframe, 'sat')
+                        try:
+                            nuclei = satellite_relation['nuclei'].split()
+                        except KeyError:
+                            nuclei = [satellite_relation['nucleus']]
+
+                        dataframe = self.parse_text_elements(rel_id, rel_name, joint_nuclei, dataframe, 'sat', nuclei)
                         break
 
                 # If there are no satellites, this JOINT functions as a nucleus
@@ -185,7 +245,7 @@ class DFConstructor(object):
 
         return dataframe
 
-    def parse_text_elements(self, rel_id, rel_name, elements, dataframe, mode):
+    def parse_text_elements(self, rel_id, rel_name, elements, dataframe, mode, nuclei=None):
         """ Parse the text elements in a given relation
 
         Keyword arguments:
@@ -194,13 +254,28 @@ class DFConstructor(object):
         elements -- the nuclei or satellites of the relation to be parsed
         dataframe -- the DataFrame to be appended to
         mode -- either 'nuc' (nucleus) or 'sat' (satellite)
+        nuclei -- a list of nuclei this label functions as a satellite to
         """
+        nuc_type = None
+
         for elem in elements:
 
             # Check for text elements
             if re.search(label_pattern, elem):
 
-                dataframe = self.append_content(rel_id, rel_name, elem, mode, dataframe)
+                if mode == 'sat':
+
+                    if len(nuclei) > 1:
+                        # TODO: check and process if needed
+                        print('!!!!?????')
+
+                    else:
+                        nucleus = nuclei[0]
+                        for tag, type in self.node_types.items():
+                            if tag == nucleus:
+                                nuc_type = type
+
+                dataframe = self.append_content(rel_id, rel_name, elem, mode, dataframe, nuc_type)
 
         return dataframe
 
@@ -269,7 +344,7 @@ class DFConstructor(object):
 
             self.label_content[tag] = text
 
-    def append_content(self, rel_id, rel_name, label_id, mode, dataframe):
+    def append_content(self, rel_id, rel_name, label_id, mode, dataframe, nuc_type=None):
         # Append the label's data to the DataFrame
 
         # Split labels are added with their original ID
@@ -292,13 +367,17 @@ class DFConstructor(object):
             if macro_group == []:
                 macro_group = np.NaN
 
+        if nuc_type is None:
+            nuc_type = np.NaN
+
         dataframe = dataframe.append({'diagram_id': self.diagram_id,
                                       'relation_id': rel_id,
                                       'relation_type': rel_name,
                                       'macro_group': macro_group,
                                       'label_id': label_id,
                                       'content': tag_text,
-                                      'role': mode},
+                                      'role': mode,
+                                      'nucleus_type': nuc_type},
                                      ignore_index=True)
 
         return dataframe
@@ -312,9 +391,30 @@ class DFConstructor(object):
         os.makedirs(outputpath, exist_ok=True)
         self.dataframe = self.dataframe.replace('slice', 'cross-section')
         self.dataframe.to_pickle(outname)
-        # example_df = self.dataframe.sample(n=5)
-        # example_df.to_csv('random_five.csv')
+        example_df = self.dataframe.sample(n=5)
+        example_df.to_csv('random_five.csv')
+        print(example_df)
 
 if __name__ == '__main__':
+    # Set up the argument parser
+    ap = argparse.ArgumentParser()
+
+    # Define arguments
+    ap.add_argument("-a", "--ai2d", required=True,
+                    help="Path to the directory containing AI2D JSON annotations.")
+    ap.add_argument("-ar", "--ai2d_rst", required=True,
+                    help="Path to the directory containing AI2D-RST JSON annotations.")
+    ap.add_argument("-ap", "--ai2d_rst_pkl", required=True,
+                    help="Path to the file containing the pickled AI2D-RST data.")
+
+    # Parse arguments
+    args = vars(ap.parse_args())
+
+    # Assign arguments to variables
+    ai2d_json = args['ai2d']
+    ai2d_rst_json = args['ai2d_rst']
+    ai2d_rst_pickle = args['ai2d_rst_pkl']
+
+    # Construct data
     constructor = DFConstructor()
     constructor.construct_dataframes()

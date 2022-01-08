@@ -7,14 +7,16 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import LinearSegmentedColormap
 from collections import defaultdict, Counter
 from scipy.stats import mannwhitneyu
-from pingouin import mwu
 from sklearn import preprocessing
+from pingouin import mwu
+from zscore import *
 
 
 class DFParser(object):
-    # This class parses the DataFrame and produces figures from it
     def __init__(self):
         self.df = None
+        self.word_count_rel_df = pd.DataFrame(columns=['relation', 'words'])
+        self.word_count_macro_df = pd.DataFrame(columns=['macro_group', 'words'])
         self.nlp = spacy.load('en_core_web_trf')
         self.figures = 0
 
@@ -36,21 +38,24 @@ class DFParser(object):
         self.total_labels_by_diagram = defaultdict(int)
         self.total_labels_by_relation = defaultdict(int)
 
+        self.nuc_blob_by_diagram = defaultdict(int)
+        self.nuc_label_by_diagram = defaultdict(int)
+        self.nuc_diag_by_diagram = defaultdict(int)
+        self.nuc_blob_by_relation = defaultdict(int)
+        self.nuc_label_by_relation = defaultdict(int)
+        self.nuc_diag_by_relation = defaultdict(int)
+
     def parse_dataframe(self, path):
-        # Parse the DataFrame
         self.df = pd.read_pickle(path)
         self.parse_linguistic_content()
         self.write_output()
 
     def parse_linguistic_content(self):
-        # Parse the linguistic content of the DataFrame
-        # List and parse macro-groups
         unique_macro_groups = self.df[self.df['macro_group'].notnull()]['macro_group'].unique()
 
         for group in unique_macro_groups:
             self.parse_column('macro_group', group)
 
-        # List and parse relations
         unique_relations = self.df['relation_type'].unique()
 
         for rel in unique_relations:
@@ -59,12 +64,6 @@ class DFParser(object):
             self.parse_column('relation_type', rel)
 
     def parse_column(self, column, value):
-        """ Parse a single column with a relation or macro-structure as the value
-
-        Keyword arguments:
-        column -- the DataFrame column
-        value -- a string with a relation or macro-group name as its value
-        """
         rows = self.df[self.df[column] == value]
         rows = rows.iloc[:, 5]
         row_content = rows.to_list()
@@ -75,17 +74,15 @@ class DFParser(object):
             i += 1
             print(f'Parsing row {i}...')
             doc = self.nlp(label)
-            # Parse the POS pattern, phrase classes and word count in each label
+
             self.parse_pos(column, value, doc)
             self.parse_phrase_classes(column, value, doc)
             self.add_word_counts(column, value, label)
 
     def parse_pos(self, column, value, doc):
-        # Parse the POS pattern of a single label
         pos_pattern = " ".join([token.pos_ for token in doc if not token.is_punct])
         pos_pattern = pos_pattern.replace('PROPN', 'NOUN')
 
-        # Add to a list of all POS patterns
         self.total_pos_patterns.append(pos_pattern)
 
         if column == 'macro_group':
@@ -94,7 +91,6 @@ class DFParser(object):
             self.relation_patterns[value].append(pos_pattern)
 
     def parse_phrase_classes(self, column, value, doc):
-        # Parse the label for its phrase class by relation or macro-group
         for token in doc:
 
             if token.dep_ == 'ROOT':
@@ -104,7 +100,6 @@ class DFParser(object):
                 elif column == 'relation_type':
                     self.total_phrases_by_relation[value] += 1
 
-                # Add to either verb or noun phrase collection by relation or macro-group
                 if token.pos_ == 'VERB':
                     if column == 'macro_group':
                         self.verb_phrases_by_diagram[value] += 1
@@ -118,40 +113,42 @@ class DFParser(object):
                         self.noun_phrases_by_relation[value] += 1
 
     def add_word_counts(self, column, value, label):
-        # Process word count by macro-group or relation
         if column == 'macro_group':
             self.total_labels_by_diagram[value] += 1
             self.words_by_diagram[value] += len(label.split())
+            self.word_count_macro_df = self.word_count_macro_df.append({'macro_group': value,
+                                                                        'words': len(label.split())},
+                                                                       ignore_index=True)
 
         elif column == 'relation_type':
             self.total_labels_by_relation[value] += 1
             length = len(label.split())
             self.words_by_relation[value] += length
 
-            # As we are interested in the figures between ELABORATION and IDENTIFICATION,
-            # handle these specifically
+            self.word_count_rel_df = self.word_count_rel_df.append({'relation': value,
+                                                                    'words': len(label.split())},
+                                                                   ignore_index=True)
+
             if value == 'elaboration':
                 self.elaboration_counts.append(length)
             elif value == 'identification':
                 self.identification_counts.append(length)
 
     def write_output(self):
-        # Write output
         print('Producing output...')
-        # self.calculate_mannwhitneyu()
         self.construct_heatmaps()
+        zscore_heatmap(self.df)
         self.construct_tables()
 
     def calculate_mannwhitneyu(self):
-        # Calculate Mann-Whitney U between IDENTIFICATION and ELABORATION
         print('Calculating Mann-Whitney U...')
-        # results = mwu(self.identification_counts, self.elaboration_counts, tail='one-sided')
+        #results = mwu(self.identification_counts, self.elaboration_counts, tail='one-sided')
         results = mannwhitneyu(self.identification_counts, self.elaboration_counts)
         input(results)
 
     def construct_heatmaps(self):
-        # Construct heatmaps of POS pattern frequencies by relation and macro-group
         print('Constructing heatmaps...')
+
         rst_df = pd.DataFrame()
         macro_df = pd.DataFrame()
 
@@ -182,53 +179,78 @@ class DFParser(object):
                 occurrences = all_patterns.count(column)
                 macro_df.at[mg, column] = occurrences
 
-        i = 0
+        i = 1
         for df in [rst_df, macro_df]:
-            i += 1
             df = df.fillna(0)
             df = df.astype(int)
-            csv_target = os.path.join('processed_data', f'heatmaps_{i}.csv')
-            df.to_csv(csv_target)
-
-        # Create heatmaps from the DataFrames
-        i = 0
-        for df in [rst_df, macro_df]:
+            df.to_csv(f'heatmaps_{i}.csv')
             i += 1
-            df_scaled = df.copy()
 
-            vals = df_scaled.values
-            min_max_scaler = preprocessing.MinMaxScaler()
-            vals_scaled = min_max_scaler.fit_transform(vals)
-            df_scaled = pd.DataFrame(vals_scaled)
-
-            df_scaled = df_scaled.astype(float)
-            sns.heatmap(df_scaled, cbar_kws={'label': 'Standardized pattern occurrence'},
-                        center=0, linewidths=.5, cmap='viridis')
-            sns.set(font_scale=1)
-            plt.xlabel('Most common POS patterns')
-            plt.ylabel('Source category')
-            plt.show()
-            csv_target = os.path.join('processed_data', f'standardized_heatmaps_{i}.csv')
-            df_scaled.to_csv(csv_target)
+        zscore_pattern(rst_df.astype(float), 'rel')
+        zscore_pattern(macro_df.astype(float), 'macro')
 
     def find_most_common_patterns(self):
         c = Counter(self.total_pos_patterns)
-        # return c.most_common(10)
+        #return c.most_common(10)
         return c.most_common(5)
 
     def construct_tables(self):
+        self.count_phrase_types()
         self.count_unique_patterns()
         self.calculate_overlap()
         self.calculate_average_word_counts()
-        self.calculate_phrase_types()
+        self.calculate_phrase_percent()
         self.tabulate_total_labels()
 
-    def calculate_average_word_counts(self):
-        # Calculate the average word count by relation and macro-group
-        print('Calculating average word counts...')
+    def count_phrase_types(self):
+        print('Counting VP and NP occurrences...')
 
         rst_df = pd.DataFrame()
         macro_df = pd.DataFrame()
+
+        # Verb phrases by relation
+        for rel in self.verb_phrases_by_relation.keys():
+
+            if rel == 'joint':
+                continue
+
+            occurrences = self.verb_phrases_by_relation[rel]
+            rst_df.at['Verb Phrases', rel] = occurrences
+
+        # Noun phrases by relation
+        for rel in self.noun_phrases_by_relation.keys():
+
+            if rel == 'joint':
+                continue
+
+            occurrences = self.noun_phrases_by_relation[rel]
+            rst_df.at['Noun Phrases', rel] = occurrences
+
+        # Verb phrases by macro-group
+        for macro_group in self.verb_phrases_by_diagram.keys():
+            occurrences = self.verb_phrases_by_diagram[macro_group]
+            macro_df.at['Verb Phrases', macro_group] = occurrences
+
+        # Noun phrases by macro-group
+        for macro_group in self.noun_phrases_by_diagram.keys():
+            occurrences = self.noun_phrases_by_diagram[macro_group]
+            macro_df.at['Noun Phrases', macro_group] = occurrences
+
+        i = 1
+        for df in [rst_df, macro_df]:
+            df = df.fillna(0)
+            df = df.astype(int)
+            output = os.path.join('processed_data', f'phrase_types_{i}.csv')
+            df.to_csv(output)
+            i += 1
+
+    def calculate_average_word_counts(self):
+        print('Calculating average word counts...')
+
+        rst_df = pd.DataFrame(columns=['relation', 'word_count', 'total_labels'])
+        macro_df = pd.DataFrame(columns=['macro_group', 'word_count', 'total_labels'])
+        # rst_df = pd.DataFrame()
+        # macro_df = pd.DataFrame()
 
         for relation in self.words_by_relation.keys():
 
@@ -237,22 +259,24 @@ class DFParser(object):
 
             average = self.words_by_relation[relation] / self.total_labels_by_relation[relation]
             average = round(average, 2)
+
             rst_df = rst_df.append({relation: average}, ignore_index=True)
+
 
         for macro_group in self.words_by_diagram.keys():
             average = self.words_by_diagram[macro_group] / self.total_labels_by_diagram[macro_group]
             average = round(average, 2)
-            macro_df = macro_df.append({macro_group: average}, ignore_index=True)
 
-        i = 0
+            macro_df = macro_df.append({relation: average}, ignore_index=True)
+
+        i = 1
         for df in [rst_df, macro_df]:
-            i += 1
             df = df.fillna(0)
-            csv_target = os.path.join('processed_data', f'word_counts_{i}.csv')
-            df.to_csv(csv_target)
+            df.to_csv(f'word_counts_{i}.csv')
+            i += 1
+            #self.draw_table(df)
 
     def count_unique_patterns(self):
-        # Count the unique POS patterns by relation and macro-group
         print('Counting unique patterns...')
 
         rst_df = pd.DataFrame()
@@ -272,16 +296,14 @@ class DFParser(object):
             patterns = len(patterns)
             macro_df = macro_df.append({macro_group: patterns}, ignore_index=True)
 
-        i = 0
+        i = 1
         for df in [rst_df, macro_df]:
-            i += 1
             df = df.fillna(0)
             df = df.astype(int)
-            csv_target = os.path.join('processed_data', f'unique_patterns_{i}.csv')
-            df.to_csv(csv_target)
+            df.to_csv(f'unique_patterns_{i}.csv')
+            i += 1
 
     def calculate_overlap(self):
-        # Calculate the overlap between labels in each relation and macro-group
         print('Calculating overlap...')
         new_df = pd.DataFrame()
 
@@ -296,11 +318,10 @@ class DFParser(object):
 
         new_df = new_df.fillna(0)
         new_df = new_df.astype(int)
-        csv_target = os.path.join('processed_data', 'overlap.csv')
-        new_df.to_csv(csv_target)
+        new_df.to_csv('overlap.csv')
+        #self.draw_table(new_df, row_labels=True)
 
-    def calculate_phrase_types(self):
-        # Count the number of verb and noun phrases by relation and macro-group
+    def calculate_phrase_percent(self):
         print('Calculating phrase percentages...')
         rst_df = pd.DataFrame(columns=['VP', 'NP', 'VP %', 'NP %'])
         macro_df = pd.DataFrame(columns=['VP', 'NP', 'VP %', 'NP %'])
@@ -318,6 +339,9 @@ class DFParser(object):
             rst_df.at[rel, 'NP %'] = noun_percentage
             rst_df.at[rel, 'total'] = total_labels
 
+            print(rel)
+            print(f'Total labels: {total_labels}')
+
         for group in self.total_labels_by_diagram.keys():
             total_labels = self.total_phrases_by_diagram[group]
             verb_phrases = self.verb_phrases_by_diagram[group]
@@ -331,16 +355,19 @@ class DFParser(object):
             macro_df.at[group, 'NP %'] = noun_percentage
             macro_df.at[group, 'total'] = total_labels
 
-        i = 0
+            print(group)
+            print(f'Total labels: {total_labels}')
+            print(f'Total VPs: {verb_phrases}')
+            print(f'Total NPs: {noun_phrases}')
+
+        i = 1
         for df in [rst_df, macro_df]:
-            i += 1
             df = df.fillna(0)
             df = df.astype(int)
-            csv_target = os.path.join('processed_data', f'phrase_type_counts_{i}.csv')
-            df.to_csv(csv_target)
+            df.to_csv(f'phrase_type_percentage_{i}.csv')
+            i += 1
 
     def tabulate_total_labels(self):
-        # Create tables of total labels in each relation and macro-group
         print('Tabulating total label counts...')
         rst_df = pd.DataFrame()
         macro_df = pd.DataFrame()
@@ -353,35 +380,48 @@ class DFParser(object):
             total_labels = self.total_labels_by_diagram[group]
             macro_df = macro_df.append({group: total_labels}, ignore_index=True)
 
-        i = 0
+        i = 1
         for df in [rst_df, macro_df]:
-            i += 1
             df = df.fillna(0)
             df = df.astype(int)
-            csv_target = os.path.join('processed_data', f'total_labels_{i}.csv')
-            df.to_csv(csv_target)
+            df.to_csv(f'total_labels_{i}.csv')
+            i += 1
+
+    def count_nucleus_types(self):
+        print('Counting nucleus types...')
+        pass
+
+    def draw_table(self, df, row_labels=False):
+        self.figures += 1
+        fig, ax = plt.subplots()
+        fig.patch.set_visible(False)
+        ax.axis('off')
+        #ax.axis('tight')
+
+        if row_labels is True:
+            table = ax.table(cellText=df.values, colLabels=df.columns, rowLabels=list(df.index),
+                             cellLoc='center', loc='center')
+        else:
+            table = ax.table(cellText=df.values, colLabels=df.columns,
+                             cellLoc='center', loc='center')
+
+        table.auto_set_font_size(False)
+        table.set_fontsize(11)
+        table.auto_set_column_width(col=list(range(len(df.columns))))
+        table.scale(1.5, 1.5)
+        plt.subplots_adjust(left=0.2, top=0.8)
+
+        plt.tick_params(axis='x', which='both', bottom=False, top=False, labelbottom=False)
+        plt.tick_params(axis='y', which='both', right=False, left=False, labelleft=False)
+
+        plt.show()
 
 
-def z_score(df):
-    df_std = df.copy()
-
-    for column in df_std.columns:
-        df_std[column] = (df_std[column] - df_std[column].mean()) / df_std[column].std()
-
-    return df_std
-
-
-def normalize(df):
-    column_max_values = df.max()
-    df_max_value = column_max_values.max()
-    column_min_values = df.min()
-    df_min_value = column_min_values.min()
-    df_norm = (df - df_min_value) / (df_max_value - df_min_value)
-
-    return df_norm
+# def grouped_weighted_avg(values, weights, by):
+#     return (values * weights).groupby(by).sum() / weights.groupby(by).sum()
 
 
 if __name__ == '__main__':
-    pickle_path = os.path.join('processed_data', 'label_dataframe.pickle')
+    pickle_path = os.path.join('data', 'output', 'label_dataframe.pickle')
     parser = DFParser()
     parser.parse_dataframe(pickle_path)
