@@ -1,4 +1,5 @@
 import json
+import argparse
 import os
 import re
 import networkx as nx
@@ -13,9 +14,9 @@ from build_graphs import *
 # Compile a regex pattern to identify label IDs in AI2D-RST
 label_pattern = re.compile(r'^T\d+\.?\d*$')
 
-ai2d_json = os.path.join('..', '..', 'AI2D-RST', 'ai2d', 'annotations')
-ai2d_rst_json = os.path.join('..', '..', 'AI2D-RST', 'utils', 'json_files', 'json', 'ai2d-rst')
-ai2d_rst_pickle = os.path.join('..', '..', 'AI2D-RST', 'utils', 'reference_1000.pkl')
+#ai2d_json = os.path.join('..', '..', 'AI2D-RST', 'ai2d', 'annotations')
+#ai2d_rst_json = os.path.join('..', '..', 'AI2D-RST', 'utils', 'json_files', 'json', 'ai2d-rst')
+#ai2d_rst_pickle = os.path.join('..', '..', 'AI2D-RST', 'utils', 'reference_1000.pkl')
 
 class DFConstructor(object):
     # This class constructs DataFrames from the data in AI2D and AI2D-RST
@@ -29,20 +30,12 @@ class DFConstructor(object):
         self.dataframe = pd.DataFrame(columns=['diagram_id', 'relation_id', 'relation_type',
                                                'macro_group', 'label_id', 'content', 'role', 'nucleus_type'])
 
-    def construct_dataframes(self):
-        self.parse_original()
+    def construct_dataframes(self, ai2d_json, ai2d_rst_json):
+        self.parse_original(ai2d_json, ai2d_rst_json)
         self.write_output()
 
-    def parse_original(self):
+    def parse_original(self, ai2d_json, ai2d_rst_json):
         # Iterate over the original reference file
-
-        # df = pd.read_pickle(ai2d_rst_pickle)
-        #
-        # for index, row in df.iterrows():
-        #     # Reset default dictionaries and parse the next row
-        #     self.label_content = defaultdict(str)
-        #     self.macro_groups = defaultdict(list)
-        #     self.parse_row(row)
 
         for file in os.listdir(ai2d_rst_json):
             if file.endswith('.json'):
@@ -404,8 +397,8 @@ if __name__ == '__main__':
                     help="Path to the directory containing AI2D JSON annotations.")
     ap.add_argument("-ar", "--ai2d_rst", required=True,
                     help="Path to the directory containing AI2D-RST JSON annotations.")
-    ap.add_argument("-ap", "--ai2d_rst_pkl", required=True,
-                    help="Path to the file containing the pickled AI2D-RST data.")
+    # ap.add_argument("-ap", "--ai2d_rst_pkl", required=True,
+    #                 help="Path to the file containing the pickled AI2D-RST data.")
 
     # Parse arguments
     args = vars(ap.parse_args())
@@ -413,8 +406,8 @@ if __name__ == '__main__':
     # Assign arguments to variables
     ai2d_json = args['ai2d']
     ai2d_rst_json = args['ai2d_rst']
-    ai2d_rst_pickle = args['ai2d_rst_pkl']
+    # ai2d_rst_pickle = args['ai2d_rst_pkl']
 
     # Construct data
     constructor = DFConstructor()
-    constructor.construct_dataframes()
+    constructor.construct_dataframes(ai2d_json, ai2d_rst_json)
