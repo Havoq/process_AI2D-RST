@@ -80,8 +80,6 @@ class DFConstructor(object):
         # Add the new data to the entire DataFrame
         self.dataframe = self.dataframe.append(new_df, ignore_index=True)
 
-        print(self.macro_groups)
-
     def parse_row(self, row):
         """ Parse a single row in the AI2D-RST reference DataFrame
 
