@@ -256,15 +256,10 @@ class DFConstructor(object):
 
                 if mode == 'sat':
 
-                    if len(nuclei) > 1:
-                        # TODO: check and process if needed
-                        print('!!!!?????')
-
-                    else:
-                        nucleus = nuclei[0]
-                        for tag, type in self.node_types.items():
-                            if tag == nucleus:
-                                nuc_type = type
+                    nucleus = nuclei[0]
+                    for tag, type in self.node_types.items():
+                        if tag == nucleus:
+                            nuc_type = type
 
                 dataframe = self.append_content(rel_id, rel_name, elem, mode, dataframe, nuc_type)
 
